@@ -25,6 +25,7 @@ A Firefox profile must be set up for each account. To do this:
 - Create an instance of `Account` for each Discord account you intend to roll with.
     - You can set wishlists, acceptable kakera reacts, and more with the `AccountOptions` parameter
 - Create an instance of `Server` for each server you intend to roll on.
+    - specify the `Root Directory` of the relevant Firefox profile here
     - Obtain the server id and channel/thread id by either
         - Visiting the web app and obtaining the values from the URL
         - Activate Developer Mode and copy the ids via the context menu

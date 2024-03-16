@@ -4,8 +4,7 @@ Is marrying waifus in Mudae too much work? Let the Officiant do the marrying for
 
 This is written in python and uses Selenium to launch Discord via Firefox and perform actions you would typically do for your hourly rolls for the Mudae bot.
 
-[!CAUTION]
-Self-botting is against Discord's Tos. By using this, you recognize that there is a potential risk that any accounts used may be banned. Proceed with caution.
+:warning: **Self-botting is against Discord's ToS.** By using this, you recognize that there is a potential risk that any Discord accounts involved may be banned. Proceed with caution.
 
 **Features**
 
@@ -26,6 +25,7 @@ A Firefox profile must be set up for each account. To do this:
 - Create an instance of `Account` for each Discord account you intend to roll with.
     - You can set wishlists, acceptable kakera reacts, and more with the `AccountOptions` parameter
 - Create an instance of `Server` for each server you intend to roll on.
+    - specify the `Root Directory` of the relevant Firefox profile here
     - Obtain the server id and channel/thread id by either
         - Visiting the web app and obtaining the values from the URL
         - Activate Developer Mode and copy the ids via the context menu

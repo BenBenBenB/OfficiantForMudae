@@ -4,8 +4,7 @@ Is marrying waifus in Mudae too much work? Let the Officiant do the marrying for
 
 This is written in python and uses Selenium to launch Discord via Firefox and perform actions you would typically do for your hourly rolls for the Mudae bot.
 
-[!CAUTION]
-Self-botting is against Discord's Tos. By using this, you recognize that there is a potential risk that any accounts used may be banned. Proceed with caution.
+[!CAUTION]Self-botting is against Discord's Tos. By using this, you recognize that there is a potential risk that any accounts used may be banned. Proceed with caution.
 
 **Features**
 

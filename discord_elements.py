@@ -28,6 +28,8 @@ from constants import (
 )
 import exceptions as exc
 
+DISPLAY_NAMES_TO_CLAIM_WISHES_FOR: set[str] = set([])
+
 DEFAULT_EMOJI = Emoji.GAME_DIE
 UNCLAIMED_MESSAGE = "Belongs to "
 
@@ -86,6 +88,7 @@ class Account:
     """
 
     name: str
+    display_name: str  # changes accross servers. Update when switching servers
     firefox_profile: str
     options: AccountOptions
 
@@ -111,7 +114,6 @@ class Account:
 class MessageBox:
     _driver: WebDriver
     element: WebElement
-    sent_by: str
 
     def __init__(self, driver: WebDriver) -> None:
         self._driver = driver
@@ -194,7 +196,7 @@ class Message:
     message_id: int
     element: WebElement
     source: MessageSource
-    invoked_by: str
+    invoked_by_user: str
     command: Command | None
     content: str
     sent_at: datetime
@@ -211,12 +213,12 @@ class Message:
         self.element = element
         self.message_id = element.get_attribute("id").split("-")[-1]
         text_lines = element.text.split("\n")
-        self.command, self.invoked_by = None, None
+        self.command, self.invoked_by_user = None, None
         if len(text_lines) == 1:
             self.source = MessageSource.TEXT
         elif text_lines[1] == " used ":
             self.sent_at = parse_date_str(text_lines[5])
-            self.invoked_by = text_lines[0]
+            self.invoked_by_user = text_lines[0].lstrip("@")
             self.source = MessageSource.SLASH_COMMAND
             try:
                 self.command = Command(text_lines[2])
@@ -297,6 +299,10 @@ class CharacterRoll:
     @property
     def id(self):
         return self._message.id
+
+    @property
+    def rolled_by(self):
+        return self._message.invoked_by_user
 
     def __init__(self, browser: WebDriver, message: Message):
         if (
@@ -421,8 +427,9 @@ class Channel:
         # Handle other messages that may have appeared while waiting
         now = datetime.now()
         stale_message_age = timedelta(minutes=2)
-        if (input_command and input_command != latest_message.command) or (
-            (now - latest_message.sent_at) > stale_message_age
+        if input_command and (
+            input_command != latest_message.command
+            or (now - latest_message.sent_at) > stale_message_age
         ):
             latest_message = next(
                 message
@@ -564,7 +571,18 @@ class TimersUp:
 
 
 def get_best_waifu(rolls: list[CharacterRoll]) -> CharacterRoll:
-    return max(rolls, key=attrgetter("kakera"))
+    wished_rolls = [r for r in rolls if r.wished and not r.claimed]
+    if wished_rolls:
+        return max(wished_rolls, key=attrgetter("kakera"))
+    else:
+        return max(rolls, key=attrgetter("kakera"))
+
+
+def get_user_display_name(browser: WebDriver) -> str:
+    user_display_element = browser.find_element(
+        By.XPATH, "//div[starts-with(@class, 'nameTag_')]"
+    )
+    return user_display_element.text.split("\n")[0]
 
 
 class ServerOptions:
@@ -622,12 +640,16 @@ class Server:
     def do_rolls(self):
         logging.info(f"Rolling on server {self.name} {self.url}")
         for user in self.accounts:
+            user.display_name = None
             try:
                 browser = user.get_firefox_browser()
                 self._process_user(browser, user)
             except Exception:
                 logging.error(f"Problem processing user {user.name}", exc_info=True)
-            browser.quit()
+                try:  # do not let this halt execution
+                    browser.quit()
+                except Exception:
+                    pass
 
     def _process_user(self, browser: WebDriver, user: Account):
         logging.info(f"Starting user {user.name}")
@@ -636,6 +658,8 @@ class Server:
         # todo: wait for latest message in channel to be 15s or older
         roll_channel = Channel(browser, self.server_id, self.roll_channel_id)
         roll_channel.send(Keys.ESCAPE * 2)
+        user.display_name = get_user_display_name(browser)
+        DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.add(user.display_name)
         if user.options.announcement_message and self.options.announce_start:
             roll_channel.send(user.options.announcement_message)
         try:
@@ -654,15 +678,20 @@ class Server:
         if tu.rolls_left > 0:
             tu = self.get_timers_up(roll_channel, user)
         if rolled and tu.is_claim_hour and tu.can_claim:
-            self.claim_best_available(rolled)
+            self.claim_best_available(rolled, roll_channel)
 
-    def claim_best_available(self, rolls: list[CharacterRoll]):
+    def claim_best_available(self, rolls: list[CharacterRoll], channel: Channel):
         best_choice = None
         while best_choice is None or best_choice.claimed:
             best_choice = get_best_waifu(rolls)
             rolls.remove(best_choice)
             best_choice = best_choice.get_fresh()
-        best_choice.claim()
+        if best_choice is not None:
+            best_choice.claim()
+            sleep(Wait.LET_CLAIM_COOK)
+            if best_choice.wished and DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.isdisjoint(set(best_choice.wished_by)):
+                channel.send(Command.NOTE, f"{best_choice.name} $ wish: {", ".join(best_choice.wished_by)}")
+                
 
     @retry(exc.InvalidTimersUpException, 2)
     def get_timers_up(self, channel: Channel, user: Account, is_retry_after_ta=False):
@@ -707,10 +736,22 @@ class Server:
             command = roll_order[i % len(roll_order)]
             just_rolled = CharacterRoll(browser, channel.send(command))
             rolled.append(just_rolled)
-            if just_rolled.wished and not just_rolled.claimed:
-                logging.info(f"Claiming wish for {user.name}: {just_rolled.name}")
+            if (
+                just_rolled.wished
+                and not just_rolled.claimed
+                and (tu.can_claim or tu.can_rt)
+                and not DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.isdisjoint(set(just_rolled.wished_by))
+            ):
+                logging.info(
+                    f"Claiming wish with {user.name}: '{just_rolled.name}'. Wished by: '{just_rolled.wished_by}'"
+                )
+                if not tu.can_claim:
+                    channel.send(Command.RESET_CLAIM_TIMER)
+                    tu.can_rt = False
+                just_rolled = just_rolled.get_fresh()
                 just_rolled.wish_react.click()
                 just_rolled.claimed = True
+                tu.can_claim = False
                 continue
             if just_rolled.kakera_reacts:
                 good_reacts = [
@@ -720,12 +761,19 @@ class Server:
                 ]
                 for react_button in good_reacts:
                     react_button.click()
-            if not just_rolled.claimed and (
-                just_rolled.name in user.options.wishlist
-                or just_rolled.series in user.options.wishlist_series
-                or just_rolled.rank <= user.options.greed_threshold_rank
-                or just_rolled.kakera >= user.options.greed_threshold_kakera
+            if (
+                (tu.can_claim or tu.can_rt)
+                and not just_rolled.claimed
+                and (
+                    just_rolled.name in user.options.wishlist
+                    or just_rolled.series in user.options.wishlist_series
+                    or just_rolled.rank <= user.options.greed_threshold_rank
+                    or just_rolled.kakera >= user.options.greed_threshold_kakera
+                )
             ):
+                if not tu.can_claim:
+                    channel.send(Command.RESET_CLAIM_TIMER)
+                    tu.can_rt = False
                 logging.info(f"Claiming for {user.name}: {just_rolled.name}")
                 just_rolled.claim(user.options.react_emoji)
                 just_rolled.claimed = True

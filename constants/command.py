@@ -6,6 +6,7 @@ from enum import StrEnum
 class Command(StrEnum):
     UNKNOWN = ""
     QUOT_IMAGE = "/miscellaneous quotimage"
+    NOTE = "/note"
     TIMERS_UP = "/tu"
     TIMERS_UP_ARRANGE = "/rollsutil tuarrange"
     TIMERS_UP_ARRANGE_PARAM = "claim, rolls, rt, rollsreset, jump, kakerareact, kakerapower, kakerainfo, kakerastock, jump, dk, daily, vote, pokemon"

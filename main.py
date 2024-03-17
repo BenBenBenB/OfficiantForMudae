@@ -75,9 +75,9 @@ other_server = Server(
     accounts=[main],
     options=ServerOptions(do_daily=False, do_pokeslot=False),
 )
+
 if __debug__:
     dev_env.minute_of_hour_to_roll = datetime.now().minute
-    main.options.announcement_message = ""
     servers = [dev_env]
 else:
     servers = [dev_env, other_server]

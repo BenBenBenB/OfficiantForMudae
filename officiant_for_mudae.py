@@ -1,64 +1,40 @@
-from constants import Command, ButtonAction, Emoji
-from discord_elements import Account, Server, ServerOptions, AccountOptions
+import logging
+import sched
+import time
+import datetime
+from discord_elements import Server
 
-firefox_profile_dir = r"C:/Users/YourName/AppData/Roaming/Mozilla/Firefox/Profiles"
 
-GOOD_REACTS = [
-    ButtonAction.PURPLE,
-    ButtonAction.YELLOW,
-    ButtonAction.ORANGE,
-    ButtonAction.RED,
-    ButtonAction.RAINBOW,
-    ButtonAction.LIGHT,
-]
+def get_seconds_until_minute_of_hour(
+    minute_of_hour: int, starting_up: bool
+) -> datetime.timedelta:
+    now = datetime.datetime.now()
+    if now.minute == minute_of_hour and starting_up:  # helps debug faster
+        return 0
+    later = datetime.datetime.now()
+    later = later.replace(minute=minute_of_hour, second=0)
+    if later <= now:
+        later += datetime.timedelta(hours=1)
+    return (later - now).seconds
 
-with open(".\wishlist.txt") as f:
-    wishlist = f.read().splitlines()
-with open(".\wishlist_series.txt") as f:
-    wishlist_series = f.read().splitlines()
 
-custom_account_options = AccountOptions(
-    roll_order=[Command.ROLL_WAIFU_ANIMANGA, Command.ROLL_ANY],
-    allowed_kakera_reacts=GOOD_REACTS,
-    react_emoji=Emoji.GAME_DIE,
-    wishlist=wishlist,
-    wishlist_series=wishlist_series,
-)
+def schedule_rolls(
+    scheduler: sched.scheduler, server: Server, starting_up: bool = True
+):
+    seconds_to_wait = get_seconds_until_minute_of_hour(
+        server.minute_of_hour_to_roll, starting_up
+    )
+    logging.info(f"Scheduled {server.name} for {seconds_to_wait} from now")
+    scheduler.enter(seconds_to_wait, 1, server.do_rolls, ())
+    scheduler.enter(seconds_to_wait, 2, schedule_rolls, (scheduler, server, False))
+    pass
 
-users = [
-    Account(
-        "username1",
-        f"{firefox_profile_dir}/vabnsd4f.DiscordUsername1",
-        custom_account_options,
-    ),
-    Account(
-        "username2",
-        f"{firefox_profile_dir}/a2pgf8ar.DiscordUsername2",
-    ),
-]
 
-servers = [
-    Server(
-        name="server 1",
-        server_id=1111111111111111,
-        roll_channel_id=1111111111111111,
-        accounts=users,
-    ),
-    Server(
-        name="server 2",
-        server_id=222222222222,
-        roll_channel_id=222222222222,
-        accounts=users,
-    ),
-    Server(
-        name="server 3",
-        server_id=3333333,
-        roll_channel_id=33333333,
-        accounts=users,
-        options=ServerOptions(do_daily_kakera=False, do_pokeslot=False),
-    ),
-]
-
-if __name__ == "__main__":
+def schedule_rolls_for_servers(servers: list[Server]):
+    scheduler = sched.scheduler(time.time, time.sleep)
     for server in servers:
-        server.do_rolls()
+        schedule_rolls(scheduler, server)
+    scheduler.run()
+
+
+__all__ = [schedule_rolls_for_servers]

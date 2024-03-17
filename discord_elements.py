@@ -1,4 +1,5 @@
 import logging
+from operator import attrgetter
 import re
 from retry import retry
 from selenium import webdriver
@@ -27,6 +28,7 @@ from constants import (
 import exceptions as exc
 
 DEFAULT_EMOJI = Emoji.GAME_DIE
+UNCLAIMED_MESSAGE = "React with any emoji to claim!"
 
 
 class DiscordElement: ...
@@ -40,6 +42,7 @@ class AccountOptions:
     greed_threshold_kakera: int
     greed_threshold_rank: int
     react_emoji: Emoji
+    announcement_message: str
 
     def __init__(
         self,
@@ -50,6 +53,7 @@ class AccountOptions:
         greed_threshold_kakera=9999,
         greed_threshold_rank=0,
         react_emoji=DEFAULT_EMOJI,
+        announcement_message="",
     ) -> None:
         self.roll_order = roll_order
         self.allowed_kakera_reacts = allowed_kakera_reacts
@@ -58,6 +62,7 @@ class AccountOptions:
         self.greed_threshold_kakera = greed_threshold_kakera
         self.greed_threshold_rank = greed_threshold_rank
         self.react_emoji = react_emoji
+        self.announcement_message = announcement_message
 
 
 class Account:
@@ -149,17 +154,25 @@ class MessageBox:
 
 class Message:
     _driver: WebDriver
-    id: str
+    _channel: "Channel"
+    message_id: int
     element: WebElement
     source: MessageSource
     invoked_by: str
     command: Command | None
     content: str
 
-    def __init__(self, driver: WebDriver, element: WebElement) -> None:
+    @property
+    def id(self):
+        return f"chat-messages-{self._channel._channel_id}-{id}"
+
+    def __init__(
+        self, driver: WebDriver, channel: "Channel", element: WebElement
+    ) -> None:
         self._driver = driver
+        self._channel = channel
         self.element = element
-        self.id = element.get_attribute("id")
+        self.message_id = element.get_attribute("id").split("-")[-1]
         text_lines = element.text.split("\n")
         self.command, self.invoked_by = None, None
         if len(text_lines) == 1:
@@ -167,7 +180,10 @@ class Message:
         elif text_lines[1] == " used ":
             self.invoked_by = text_lines[0]
             self.source = MessageSource.SLASH_COMMAND
-            self.command = Command(text_lines[2])
+            try:
+                self.command = Command(text_lines[2])
+            except Exception:
+                self.command = Command.UNKNOWN
             text_lines = text_lines[6:]
         elif text_lines[1] == "BOT":
             self.source = MessageSource.TEXT_COMMAND
@@ -177,7 +193,13 @@ class Message:
             text_lines = text_lines[2:]
         self.content = "\n".join(text_lines)
 
+    def get_fresh(self) -> "Message":
+        return self._channel.get_message_by_id(self.message_id)
+
     def react(self, emoji: Emoji):
+        js_code = "arguments[0].scrollIntoView();"
+        self._driver.execute_script(js_code, self.element)
+
         action = ActionChains(self._driver)
         action.move_to_element(self.element)
         action.context_click()
@@ -230,8 +252,20 @@ class CharacterRoll:
     def claimed(self):
         return self.owner is not None
 
+    @property
+    def message_id(self):
+        return self._message.message_id
+
+    @property
+    def id(self):
+        return self._message.id
+
     def __init__(self, browser: WebDriver, message: Message):
-        if message.command is None or not message.command.name.startswith("ROLL"):
+        if (
+            message is None
+            or message.command is None
+            or not message.command.name.startswith("ROLL")
+        ):
             raise TypeError("Supplied message is not roll slash command response")
 
         self._browser = browser
@@ -276,7 +310,7 @@ class CharacterRoll:
         if lines:
             if re.match(r".*\/.*- \d+ ka", lines[-1]):
                 lines.pop()
-            if lines[-1] == "React with any emoji to claim!":
+            if lines[-1] == UNCLAIMED_MESSAGE:
                 lines.pop()
             self.series = " ".join(line for line in lines if line)
         else:
@@ -317,37 +351,42 @@ class CharacterRoll:
     def react(self, emoji: Emoji = DEFAULT_EMOJI):
         self._message.react(emoji)
 
+    def get_fresh(self) -> "CharacterRoll":
+        return CharacterRoll(self._browser, self._message.get_fresh())
+
 
 class Channel:
     _driver: WebDriver
     _server_id: int
-    _roll_channel_id: int
+    _channel_id: int
     _message_box: MessageBox
 
-    def __init__(self, driver: WebDriver, server_id: int, roll_channel_id: int) -> None:
+    def __init__(self, driver: WebDriver, server_id: int, channel_id: int) -> None:
         self._driver = driver
         self._server_id = server_id
-        self._roll_channel_id = roll_channel_id
+        self._channel_id = channel_id
         self._message_box = MessageBox(driver)
 
     def send(self, text: str, params: str | None = None) -> Message:
         """Sends inputs to the message box and returns the response."""
+        input_command, input_source = self._characterize_input(text)
+
         self._message_box.send(text, params)
         latest_message = self.get_latest_message()
-        while latest_message.content in ["", "Sending command..."]:
-            sleep(Wait.MESSAGE_LOAD)
+        sleep(Wait.MESSAGE_LOAD)
+        while (
+            input_source == MessageSource.SLASH_COMMAND
+            and latest_message.source == MessageSource.SLASH_COMMAND
+            and latest_message.content in ["", "Sending command..."]
+        ):
             latest_message = self.get_latest_message()
         # Handle other messages that may have appeared while waiting
-        try:
-            input_command = Command(text)
-            if input_command != latest_message.command:
-                latest_message = next(
-                    message
-                    for message in self.get_messages()[::-1]
-                    if message.command == input_command
-                )
-        except ValueError:
-            pass
+        if input_command and input_command != latest_message.command:
+            latest_message = next(
+                message
+                for message in self.get_messages()[::-1]
+                if message.command == input_command
+            )
         if "Command DISABLED for this channel" in latest_message.content:
             raise exc.CommandDisabledException()
 
@@ -356,7 +395,7 @@ class Channel:
     @retry(StaleElementReferenceException, tries=4)
     def get_messages(self) -> list[Message]:
         return [
-            Message(self._driver, message_element)
+            Message(self._driver, self, message_element)
             for message_element in self._driver.find_elements(
                 By.XPATH, "//li[starts-with(@id, 'chat-messages')]"
             )
@@ -367,18 +406,39 @@ class Channel:
         latest_message_element = self._driver.find_elements(
             By.XPATH, "//li[starts-with(@id, 'chat-messages')]"
         )[-1]
-        return Message(self._driver, latest_message_element)
+        return Message(self._driver, self, latest_message_element)
 
-    def get_message(self, id: str):
+    def get_message_by_id(self, message_id: int):
+        return self.get_message_by_html_id(self.get_html_message_id(message_id))
+
+    def get_html_message_id(self, message_id: int) -> str:
+        return f"chat-messages-{self._channel_id}-{message_id}"
+
+    def get_message_by_html_id(self, id: str):
         try:
             return Message(
-                self._driver, self._driver.find_element(By.XPATH, f"//li[@id='{id}']")
+                self._driver,
+                self,
+                self._driver.find_element(By.XPATH, f"//li[@id='{id}']"),
             )
         except NoSuchElementException:
             return None
 
     def parse_message(self, web_element: WebElement):
-        return Message(self._driver, web_element)
+        return Message(self._driver, self, self, web_element)
+
+    def _characterize_input(self, text):
+        try:
+            input_command = Command(text)
+            input_source = (
+                MessageSource.SLASH_COMMAND
+                if input_command.value.startswith("/")
+                else MessageSource.TEXT_COMMAND
+            )
+        except ValueError:
+            input_command = None
+            input_source = MessageSource.TEXT
+        return input_command, input_source
 
 
 class TimersUp:
@@ -418,7 +478,7 @@ class TimersUp:
 
     @property
     def is_claim_hour(self):
-        return self.minutes_until_claim_reset <= 60
+        return self.claim_reset_minutes <= 60
 
     @property
     def can_react(self):
@@ -461,11 +521,16 @@ class TimersUp:
             return times[0] * 60 + times[1]
 
 
+def get_best_waifu(rolls: list[CharacterRoll]) -> CharacterRoll:
+    return max(rolls, key=attrgetter("kakera"))
+
+
 class ServerOptions:
     do_react: bool
     do_daily: bool
     do_daily_kakera: bool
     do_pokeslot: bool
+    announce_start: bool
 
     def __init__(
         self,
@@ -473,11 +538,13 @@ class ServerOptions:
         do_daily: bool = True,
         do_daily_kakera: bool = True,
         do_pokeslot: bool = True,
+        announce_start: bool = False,
     ) -> None:
         self.do_react = do_react
         self.do_daily = do_daily
         self.do_daily_kakera = do_daily_kakera
         self.do_pokeslot = do_pokeslot
+        self.announce_start = announce_start
 
 
 class Server:
@@ -486,6 +553,7 @@ class Server:
     name: str
     server_id: int
     roll_channel_id: int
+    minute_of_hour_to_roll: int
     accounts: list[Account]
     options: ServerOptions
 
@@ -498,12 +566,14 @@ class Server:
         name: str,
         server_id: int,
         roll_channel_id: int,
+        minute_of_hour_to_roll: int,
         accounts: list[Account],
         options: ServerOptions = ServerOptions(),
     ):
         self.name = name
         self.server_id = server_id
         self.roll_channel_id = roll_channel_id
+        self.minute_of_hour_to_roll = minute_of_hour_to_roll
         self.accounts = accounts
         self.options = options
 
@@ -513,13 +583,9 @@ class Server:
             try:
                 browser = user.get_firefox_browser()
                 self._process_user(browser, user)
-            except Exception as e:
-                logging.error(f"Problem processing user {user.name}", e)
-            finally:
-                try:
-                    browser.quit()
-                except Exception:
-                    pass
+            except Exception:
+                logging.error(f"Problem processing user {user.name}", exc_info=True)
+            browser.quit()
 
     def _process_user(self, browser: WebDriver, user: Account):
         logging.info(f"Starting user {user.name}")
@@ -527,7 +593,9 @@ class Server:
         sleep(Wait.PAGE_LOAD)
         # todo: wait for latest message in channel to be 15s or older
         roll_channel = Channel(browser, self.server_id, self.roll_channel_id)
-        roll_channel.send(Keys.ESCAPE * 2 + "It's roll time!")
+        roll_channel.send(Keys.ESCAPE * 2)
+        if user.options.announcement_message and self.options.announce_start:
+            roll_channel.send(user.options.announcement_message)
         try:
             tu = self.get_timers_up(roll_channel, user)
         except exc.InvalidTimersUpException:
@@ -540,6 +608,19 @@ class Server:
         rolled = self._do_rolls(
             browser, roll_channel, tu, user, tu.rolls_left, user.options.roll_order
         )
+
+        if tu.rolls_left > 0:
+            tu = self.get_timers_up(roll_channel, user)
+        if rolled and tu.is_claim_hour and tu.can_claim:
+            self.claim_best_available(rolled)
+
+    def claim_best_available(self, rolls: list[CharacterRoll]):
+        best_choice = None
+        while best_choice is None or best_choice.claimed:
+            best_choice = get_best_waifu(rolls)
+            rolls.remove(best_choice)
+            best_choice = best_choice.get_fresh()
+        best_choice.claim()
 
     @retry(exc.InvalidTimersUpException, 2)
     def get_timers_up(self, channel: Channel, user: Account, is_retry_after_ta=False):
@@ -558,7 +639,7 @@ class Server:
                 channel.send("Oops")
                 raise e
 
-    def _do_non_rolls(self, channel: Channel, tu: TimersUp):
+    def _do_non_rolls(self, channel: Channel, tu: TimersUp) -> None:
         if self.options.do_daily and tu.can_daily:
             channel.send(Command.DAILY)
         if (
@@ -578,7 +659,7 @@ class Server:
         user: Account,
         count: int,
         roll_order: list[Command],
-    ):
+    ) -> list[CharacterRoll]:
         rolled = []
         for i in range(count):
             command = roll_order[i % len(roll_order)]
@@ -597,8 +678,6 @@ class Server:
                 ]
                 for react_button in good_reacts:
                     react_button.click()
-                    response = channel.get_latest_message()
-                    pass
             if not just_rolled.claimed and (
                 just_rolled.name in user.options.wishlist
                 or just_rolled.series in user.options.wishlist_series

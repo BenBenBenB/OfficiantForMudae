@@ -69,7 +69,7 @@ class Account:
         self,
         name: str,
         firefox_profile: str,
-        options: AccountOptions,
+        options: AccountOptions = AccountOptions(),
     ):
         self.name = name
         self.firefox_profile = firefox_profile
@@ -190,6 +190,9 @@ class CharacterRoll:
         return self.owner is not None
 
     def __init__(self, browser: WebDriver, message: Message):
+        if message.command is None or not message.command.name.startswith("ROLL"):
+            raise TypeError("Supplied message is not roll slash command response")
+
         self._browser = browser
         self._message = message
         lines: list[str] = message.content.split("\n")
@@ -460,11 +463,19 @@ class Server:
     def do_rolls(self):
         logging.info(f"Rolling on server {self.name} {self.url}")
         for user in self.accounts:
-            self._process_user(user)
+            try:
+                browser = user.get_firefox_browser()
+                self._process_user(browser, user)
+            except Exception as e:
+                logging.error(f"Problem processing user {user.name}", e)
+            finally:
+                try:
+                    browser.quit()
+                except Exception:
+                    pass
 
-    def _process_user(self, user: Account):
+    def _process_user(self, browser: WebDriver, user: Account):
         logging.info(f"Starting user {user.name}")
-        browser = user.get_firefox_browser()
         browser.get(self.url)
         sleep(Wait.PAGE_LOAD)
         # todo: wait for latest message in channel to be 15s or older
@@ -483,8 +494,6 @@ class Server:
             browser, roll_channel, tu, user, tu.rolls_left, user.options.roll_order
         )
 
-        browser.quit()
-
     @retry(exc.InvalidTimersUp, 2)
     def get_timers_up(self, channel: Channel, user: Account, is_retry_after_ta=False):
         try:
@@ -497,8 +506,9 @@ class Server:
         except IndexError as e:
             if not is_retry_after_ta:
                 channel.send(Command.TIMERS_UP_ARRANGE, Command.TIMERS_UP_ARRANGE_PARAM)
-                return self.get_timers_up(channel, user)
+                return self.get_timers_up(channel, user, True)
             else:
+                channel.send("Oops")
                 raise e
 
     def _do_non_rolls(self, channel: Channel, tu: TimersUp):
@@ -539,6 +549,7 @@ class Server:
                 for react_button in good_reacts:
                     react_button.click()
                     response = channel.get_latest_message()
+                    pass
             if (
                 just_rolled.name in user.options.wishlist
                 or just_rolled.series in user.options.wishlist_series

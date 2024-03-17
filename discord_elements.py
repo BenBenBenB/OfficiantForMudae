@@ -19,11 +19,14 @@ from constants import (
     ALL_KAKERA_REACTS,
     ButtonAction,
     Command,
+    Emoji,
     MessageSource,
     TuRow,
     Wait,
 )
 import exceptions as exc
+
+DEFAULT_EMOJI = Emoji.GAME_DIE
 
 
 class DiscordElement: ...
@@ -36,6 +39,7 @@ class AccountOptions:
     wishlist_series: list[str]
     greed_threshold_kakera: int
     greed_threshold_rank: int
+    react_emoji: Emoji
 
     def __init__(
         self,
@@ -45,6 +49,7 @@ class AccountOptions:
         wishlist_series: list[str] = [],
         greed_threshold_kakera=9999,
         greed_threshold_rank=0,
+        react_emoji=DEFAULT_EMOJI,
     ) -> None:
         self.roll_order = roll_order
         self.allowed_kakera_reacts = allowed_kakera_reacts
@@ -52,6 +57,7 @@ class AccountOptions:
         self.wishlist_series = wishlist_series
         self.greed_threshold_kakera = greed_threshold_kakera
         self.greed_threshold_rank = greed_threshold_rank
+        self.react_emoji = react_emoji
 
 
 class Account:
@@ -69,7 +75,7 @@ class Account:
         self,
         name: str,
         firefox_profile: str,
-        options: AccountOptions,
+        options: AccountOptions = AccountOptions(),
     ):
         self.name = name
         self.firefox_profile = firefox_profile
@@ -100,6 +106,7 @@ class MessageBox:
 
     def send(self, text: str, param: str | None = None) -> None:
         self._clear_text()
+        self.element.send_keys(Keys.ESCAPE)
         if text.startswith("/"):
             self._send_command(text, param)
         else:
@@ -113,16 +120,28 @@ class MessageBox:
         action.perform()
 
     def _send_command(self, command: str, param: str | None):
+        command = command.lstrip("/")
         if not command.endswith(" "):
             command += " "
+        self.element.send_keys("/")
+        self._wait_for_slash_to_be_recognized()
         self.element.send_keys(command)
-        # wait for signal that Discord recognized the command
-        self._driver.find_element(
-            By.XPATH, "//div[starts-with(@class, 'attachedBars')]"
-        )
+        self._wait_for_command_to_be_recognized()
         if param:
             self.element.send_keys(param)
         self.element.send_keys(Keys.RETURN)
+
+    @retry(NoSuchElementException, 3)
+    def _wait_for_slash_to_be_recognized(self):
+        self._driver.find_element(
+            By.XPATH, "//div[starts-with(@class, 'autocomplete_')]"
+        )
+
+    @retry(NoSuchElementException, 3)
+    def _wait_for_command_to_be_recognized(self):
+        self._driver.find_element(
+            By.XPATH, "//div[starts-with(@class, 'attachedBars_')]"
+        )
 
     def get_timers_up(self):
         self._send_command("/tu")
@@ -158,6 +177,28 @@ class Message:
             text_lines = text_lines[2:]
         self.content = "\n".join(text_lines)
 
+    def react(self, emoji: Emoji):
+        action = ActionChains(self._driver)
+        action.move_to_element(self.element)
+        action.context_click()
+        action.perform()
+
+        add_reaction = self._driver.find_element(
+            By.XPATH, "//div[@id='message-add-reaction']"
+        )
+        add_reaction.click()
+
+        emoji_search = self._driver.find_element(
+            By.XPATH, "//input[@aria-label='Search emoji']"
+        )
+        emoji_search.send_keys(emoji)
+
+        emoji_text = emoji.value.strip(":")
+        emoji_button = self._driver.find_element(
+            By.XPATH, f"//button[contains(@data-name,'{emoji_text}')]"
+        )
+        emoji_button.click()
+
 
 class MudaeButton:
     _element: WebElement
@@ -190,6 +231,9 @@ class CharacterRoll:
         return self.owner is not None
 
     def __init__(self, browser: WebDriver, message: Message):
+        if message.command is None or not message.command.name.startswith("ROLL"):
+            raise TypeError("Supplied message is not roll slash command response")
+
         self._browser = browser
         self._message = message
         lines: list[str] = message.content.split("\n")
@@ -259,8 +303,9 @@ class CharacterRoll:
         self.kakera_reacts = [b for b in buttons if b.action != ButtonAction.WISH]
         pass
 
-    def claim(self) -> None:
+    def claim(self, emoji=DEFAULT_EMOJI) -> None:
         logging.info(f"Attempting claim for: {self}")
+        self.react(emoji)
         pass
 
     def _get_button_elements(self) -> list[WebElement]:
@@ -268,6 +313,9 @@ class CharacterRoll:
         return self._message.element.find_elements(
             By.XPATH, ".//button[@role='button']"
         )
+
+    def react(self, emoji: Emoji = DEFAULT_EMOJI):
+        self._message.react(emoji)
 
 
 class Channel:
@@ -285,23 +333,25 @@ class Channel:
     def send(self, text: str, params: str | None = None) -> Message:
         """Sends inputs to the message box and returns the response."""
         self._message_box.send(text, params)
-        roll_message = self.get_latest_message()
-        while roll_message.content in ["", "Sending command..."]:
+        latest_message = self.get_latest_message()
+        while latest_message.content in ["", "Sending command..."]:
             sleep(Wait.MESSAGE_LOAD)
-            roll_message = self.get_latest_message()
+            latest_message = self.get_latest_message()
         # Handle other messages that may have appeared while waiting
         try:
             input_command = Command(text)
-            if input_command != roll_message.command:
-                roll_message = next(
+            if input_command != latest_message.command:
+                latest_message = next(
                     message
                     for message in self.get_messages()[::-1]
                     if message.command == input_command
                 )
         except ValueError:
             pass
+        if "Command DISABLED for this channel" in latest_message.content:
+            raise exc.CommandDisabledException()
 
-        return roll_message
+        return latest_message
 
     @retry(StaleElementReferenceException, tries=4)
     def get_messages(self) -> list[Message]:
@@ -460,11 +510,19 @@ class Server:
     def do_rolls(self):
         logging.info(f"Rolling on server {self.name} {self.url}")
         for user in self.accounts:
-            self._process_user(user)
+            try:
+                browser = user.get_firefox_browser()
+                self._process_user(browser, user)
+            except Exception as e:
+                logging.error(f"Problem processing user {user.name}", e)
+            finally:
+                try:
+                    browser.quit()
+                except Exception:
+                    pass
 
-    def _process_user(self, user: Account):
+    def _process_user(self, browser: WebDriver, user: Account):
         logging.info(f"Starting user {user.name}")
-        browser = user.get_firefox_browser()
         browser.get(self.url)
         sleep(Wait.PAGE_LOAD)
         # todo: wait for latest message in channel to be 15s or older
@@ -472,7 +530,7 @@ class Server:
         roll_channel.send(Keys.ESCAPE * 2 + "It's roll time!")
         try:
             tu = self.get_timers_up(roll_channel, user)
-        except exc.InvalidTimersUp:
+        except exc.InvalidTimersUpException:
             roll_channel.send("Oops sorry!")
         self._do_non_rolls(roll_channel, tu)
 
@@ -483,22 +541,21 @@ class Server:
             browser, roll_channel, tu, user, tu.rolls_left, user.options.roll_order
         )
 
-        browser.quit()
-
-    @retry(exc.InvalidTimersUp, 2)
+    @retry(exc.InvalidTimersUpException, 2)
     def get_timers_up(self, channel: Channel, user: Account, is_retry_after_ta=False):
         try:
             response = channel.send("/tu")
             # prevent someone else's tu from being read
             name_on_tu = response.content.split(",")[0]
             if user.name != name_on_tu:
-                raise exc.InvalidTimersUp(user.name, name_on_tu)
+                raise exc.InvalidTimersUpException(user.name, name_on_tu)
             return TimersUp(response)
         except IndexError as e:
             if not is_retry_after_ta:
                 channel.send(Command.TIMERS_UP_ARRANGE, Command.TIMERS_UP_ARRANGE_PARAM)
-                return self.get_timers_up(channel, user)
+                return self.get_timers_up(channel, user, True)
             else:
+                channel.send("Oops")
                 raise e
 
     def _do_non_rolls(self, channel: Channel, tu: TimersUp):
@@ -528,7 +585,9 @@ class Server:
             just_rolled = CharacterRoll(browser, channel.send(command))
             rolled.append(just_rolled)
             if just_rolled.wished and not just_rolled.claimed:
+                logging.info(f"Claiming wish for {user.name}: {just_rolled.name}")
                 just_rolled.wish_react.click()
+                just_rolled.claimed = True
                 continue
             if just_rolled.kakera_reacts:
                 good_reacts = [
@@ -539,10 +598,15 @@ class Server:
                 for react_button in good_reacts:
                     react_button.click()
                     response = channel.get_latest_message()
-            if (
+                    pass
+            if not just_rolled.claimed and (
                 just_rolled.name in user.options.wishlist
                 or just_rolled.series in user.options.wishlist_series
+                or just_rolled.rank <= user.options.greed_threshold_rank
+                or just_rolled.kakera >= user.options.greed_threshold_kakera
             ):
-                just_rolled.claim()
+                logging.info(f"Claiming for {user.name}: {just_rolled.name}")
+                just_rolled.claim(user.options.react_emoji)
+                just_rolled.claimed = True
 
         return rolled

@@ -1,4 +1,4 @@
-from constants import Command, ButtonAction
+from constants import Command, ButtonAction, Emoji
 from discord_elements import Account, Server, ServerOptions, AccountOptions
 
 firefox_profile_dir = r"C:/Users/YourName/AppData/Roaming/Mozilla/Firefox/Profiles"
@@ -12,9 +12,17 @@ GOOD_REACTS = [
     ButtonAction.LIGHT,
 ]
 
+with open(".\wishlist.txt") as f:
+    wishlist = f.read().splitlines()
+with open(".\wishlist_series.txt") as f:
+    wishlist_series = f.read().splitlines()
+
 custom_account_options = AccountOptions(
     roll_order=[Command.ROLL_WAIFU_ANIMANGA, Command.ROLL_ANY],
     allowed_kakera_reacts=GOOD_REACTS,
+    react_emoji=Emoji.GAME_DIE,
+    wishlist=wishlist,
+    wishlist_series=wishlist_series,
 )
 
 users = [

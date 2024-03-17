@@ -24,7 +24,7 @@ def schedule_rolls(
     seconds_to_wait = get_seconds_until_minute_of_hour(
         server.minute_of_hour_to_roll, starting_up
     )
-    logging.info(f"Scheduled {server.name} for {seconds_to_wait} from now")
+    logging.info(f"Scheduled '{server.name}' for {seconds_to_wait} seconds from now")
     scheduler.enter(seconds_to_wait, 1, server.do_rolls, ())
     scheduler.enter(seconds_to_wait, 2, schedule_rolls, (scheduler, server, False))
     pass

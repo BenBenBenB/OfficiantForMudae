@@ -1,3 +1,4 @@
+from datetime import date, datetime, timedelta
 import logging
 from operator import attrgetter
 import re
@@ -28,13 +29,25 @@ from constants import (
 import exceptions as exc
 
 DEFAULT_EMOJI = Emoji.GAME_DIE
-UNCLAIMED_MESSAGE = "React with any emoji to claim!"
+UNCLAIMED_MESSAGE = "Belongs to "
 
 
 class DiscordElement: ...
 
 
 class AccountOptions:
+    """Set options for the user in their rolls.
+
+    roll_order: rolls to be sent. Example: allows you to split rolls 50% $wa, %50 $mx
+    allowed_kakera_reacts: White list kakera reacts to prevent clicking low value ones
+    wishlist: names of characters that should be claimed if rolled
+    wishlist_series: names of series from which characters should be claimed if rolled
+    greed_threshold_kakera: if the character is more valuable than this, claim it
+    greed_threshold_rank: if the character is better ranked than this, claim it
+    react_emoji: Emoji to be used for claims
+    announcement_message: A message or command to be sent before you start rolling.
+    """
+
     roll_order: list[Command]
     allowed_kakera_reacts: list[ButtonAction]
     wishlist: list[str]
@@ -53,7 +66,7 @@ class AccountOptions:
         greed_threshold_kakera=9999,
         greed_threshold_rank=0,
         react_emoji=DEFAULT_EMOJI,
-        announcement_message="",
+        announcement_message=f"It's roll time! {Emoji.GAME_DIE}",
     ) -> None:
         self.roll_order = roll_order
         self.allowed_kakera_reacts = allowed_kakera_reacts
@@ -152,6 +165,29 @@ class MessageBox:
         self._send_command("/tu")
 
 
+TODAY_TEXT = "Today at "
+YESTERDAY_TEXT = "Yesterday at "
+DATE_FORMAT = "%m/%d/%Y"
+TIME_FORMAT = "%I:%M %p"
+DATETIME_FORMAT = f"{DATE_FORMAT} {TIME_FORMAT}"
+
+
+def parse_date_str(input_text: str):
+
+    if TODAY_TEXT in input_text:
+        date_part = date.today()
+        time_text = input_text.replace(TODAY_TEXT, "")
+        time_part = datetime.strptime(time_text, TIME_FORMAT).time()
+        return datetime.combine(date_part, time_part)
+    if YESTERDAY_TEXT in input_text:
+        date_part = date.today() - timedelta(days=1)
+        time_text = input_text.replace(YESTERDAY_TEXT, "")
+        time_part = datetime.strptime(time_text, TIME_FORMAT).time()
+        return datetime.combine(date_part, time_part)
+    else:
+        return datetime.strptime(input_text, DATETIME_FORMAT)
+
+
 class Message:
     _driver: WebDriver
     _channel: "Channel"
@@ -161,6 +197,7 @@ class Message:
     invoked_by: str
     command: Command | None
     content: str
+    sent_at: datetime
 
     @property
     def id(self):
@@ -178,6 +215,7 @@ class Message:
         if len(text_lines) == 1:
             self.source = MessageSource.TEXT
         elif text_lines[1] == " used ":
+            self.sent_at = parse_date_str(text_lines[5])
             self.invoked_by = text_lines[0]
             self.source = MessageSource.SLASH_COMMAND
             try:
@@ -381,7 +419,11 @@ class Channel:
         ):
             latest_message = self.get_latest_message()
         # Handle other messages that may have appeared while waiting
-        if input_command and input_command != latest_message.command:
+        now = datetime.now()
+        stale_message_age = timedelta(minutes=2)
+        if (input_command and input_command != latest_message.command) or (
+            (now - latest_message.sent_at) > stale_message_age
+        ):
             latest_message = next(
                 message
                 for message in self.get_messages()[::-1]

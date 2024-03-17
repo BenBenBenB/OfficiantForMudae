@@ -1,7 +1,10 @@
 from constants import Command, ButtonAction, Emoji
 from discord_elements import Account, Server, ServerOptions, AccountOptions
+import logging
 from officiant_for_mudae import schedule_rolls_for_servers
 
+if __debug__:
+    from datetime import datetime
 
 GOOD_REACTS = [
     ButtonAction.PURPLE,
@@ -12,9 +15,9 @@ GOOD_REACTS = [
     ButtonAction.LIGHT,
 ]
 
-with open(".\wishlist.txt") as f:
+with open(r".\wishlist.txt") as f:
     wishlist = f.read().splitlines()
-with open(".\wishlist_series.txt") as f:
+with open(r".\wishlist_series.txt") as f:
     wishlist_series = f.read().splitlines()
 
 custom_account_options = AccountOptions(
@@ -26,48 +29,62 @@ custom_account_options = AccountOptions(
     announcement_message=Command.QUOT_IMAGE,
 )
 
+
 main = Account(
     "mainusername",
-    r"C:/Users/BenB/AppData/Roaming/Mozilla/Firefox/Profiles/blablabla1",
-    custom_account_options,
+    r"C:/Users/YourName/AppData/Roaming/Mozilla/Firefox/Profiles/nf1df3n1.DiscordMain",
+    AccountOptions(
+        roll_order=[Command.ROLL_WAIFU_ANIMANGA, Command.ROLL_ANY],
+        allowed_kakera_reacts=GOOD_REACTS,
+        react_emoji=Emoji.GAME_DIE,
+        wishlist=wishlist,
+        wishlist_series=wishlist_series,
+        announcement_message=f"It's roll time! {Emoji.GAME_DIE}",
+    ),
 )
 alt = Account(
-    "altusername",
-    r"C:/Users/BenB/AppData/Roaming/Mozilla/Firefox/Profiles/blablabla2",
-    custom_account_options,
+    "alt",
+    r"C:/Users/YourName/AppData/Roaming/Mozilla/Firefox/Profiles/pgddhf4x.DiscordAlt",
+    AccountOptions(
+        roll_order=[Command.ROLL_WAIFU_ANIMANGA, Command.ROLL_ANY],
+        allowed_kakera_reacts=GOOD_REACTS,
+        react_emoji=Emoji.GAME_DIE,
+        wishlist=wishlist,
+        wishlist_series=wishlist_series,
+        announcement_message=Command.QUOT_IMAGE,
+    ),
 )
 users = [main, alt]
 
 my_options = ServerOptions(announce_start=True)
 
-servers = [
-    Server(
-        name="Dev",
-        server_id=1111111111,
-        roll_channel_id=11111111111,
-        minute_of_hour_to_roll=24,
-        accounts=users,
-        options=my_options,
-    ),
-    Server(
-        name="Another",
-        server_id=2222222222,
-        roll_channel_id=22222222222,
-        minute_of_hour_to_roll=14,
-        accounts=users,
-        options=my_options,
-    ),
-    Server(
-        name="Different Options and Accounts",
-        server_id=333333333,
-        roll_channel_id=33333333333,
-        minute_of_hour_to_roll=51,
-        accounts=[main],
-        options=ServerOptions(
-            do_daily_kakera=False, do_pokeslot=False, announce_start=True
-        ),
-    ),
-]
+dev_env = Server(
+    name="Dev Env",
+    server_id=1111111111111,
+    roll_channel_id=222222222222222222,
+    minute_of_hour_to_roll=24,  # resets at 31
+    accounts=users,
+    options=my_options,
+)
+# A more lowkey configuration. Also roll only 1 account.
+other_server = Server(
+    name="Other Server",
+    server_id=333333333333,
+    roll_channel_id=444444444444444,
+    minute_of_hour_to_roll=14,  # resets at 24
+    accounts=[main],
+    options=ServerOptions(do_daily=False, do_pokeslot=False),
+)
+if __debug__:
+    dev_env.minute_of_hour_to_roll = datetime.now().minute
+    main.options.announcement_message = ""
+    servers = [dev_env]
+else:
+    servers = [dev_env, other_server]
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        filename="claim_history.log", encoding="utf-8", level=logging.INFO
+    )
+    logging.info("Officiant starting up.")
     schedule_rolls_for_servers(servers)

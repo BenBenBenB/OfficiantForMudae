@@ -411,7 +411,7 @@ class Channel:
         self._channel_id = channel_id
         self._message_box = MessageBox(driver)
 
-    def send(self, text: str, params: str | None = None) -> Message:
+    def send(self, user: Account, text: str, params: str | None = None) -> Message:
         """Sends inputs to the message box and returns the response."""
         input_command, input_source = self._characterize_input(text)
 
@@ -429,6 +429,7 @@ class Channel:
         stale_message_age = timedelta(minutes=2)
         if input_command and (
             input_command != latest_message.command
+            or (user.display_name != latest_message.invoked_by_user)
             or (now - latest_message.sent_at) > stale_message_age
         ):
             latest_message = next(
@@ -657,30 +658,32 @@ class Server:
         sleep(Wait.PAGE_LOAD)
         # todo: wait for latest message in channel to be 15s or older
         roll_channel = Channel(browser, self.server_id, self.roll_channel_id)
-        roll_channel.send(Keys.ESCAPE * 2)
+        roll_channel.send(user, Keys.ESCAPE * 2)
         user.display_name = get_user_display_name(browser)
         DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.add(user.display_name)
         if user.options.announcement_message and self.options.announce_start:
-            roll_channel.send(user.options.announcement_message)
+            roll_channel.send(user, user.options.announcement_message)
         try:
             tu = self.get_timers_up(roll_channel, user)
         except exc.InvalidTimersUpException:
-            roll_channel.send("Oops sorry!")
-        self._do_non_rolls(roll_channel, tu)
+            roll_channel.send(user, "Oops sorry!")
+        self._do_non_rolls(user, roll_channel, tu)
 
         self._do_rolls(
             browser, roll_channel, tu, user, tu.mk_rolls_left, [Command.ROLL_KAKERA]
         )
         rolled = self._do_rolls(
-            browser, roll_channel, tu, user, tu.rolls_left, user.options.roll_order
+            browser, roll_channel, user, tu, tu.rolls_left, user.options.roll_order
         )
 
         if tu.rolls_left > 0:
             tu = self.get_timers_up(roll_channel, user)
         if rolled and tu.is_claim_hour and tu.can_claim:
-            self.claim_best_available(rolled, roll_channel)
+            self.claim_best_available(user, rolled, roll_channel)
 
-    def claim_best_available(self, rolls: list[CharacterRoll], channel: Channel):
+    def claim_best_available(
+        self, user: Account, rolls: list[CharacterRoll], channel: Channel
+    ):
         best_choice = None
         while best_choice is None or best_choice.claimed:
             best_choice = get_best_waifu(rolls)
@@ -689,14 +692,18 @@ class Server:
         if best_choice is not None:
             best_choice.claim()
             sleep(Wait.LET_CLAIM_COOK)
-            if best_choice.wished and DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.isdisjoint(set(best_choice.wished_by)):
-                channel.send(Command.NOTE, f"{best_choice.name} $ wish: {", ".join(best_choice.wished_by)}")
-                
+            if best_choice.wished and DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.isdisjoint(
+                set(best_choice.wished_by)
+            ):
+                wishers = ", ".join(best_choice.wished_by)
+                channel.send(
+                    user, Command.NOTE, f"{best_choice.name} $ wish: {wishers}"
+                )
 
     @retry(exc.InvalidTimersUpException, 2)
     def get_timers_up(self, channel: Channel, user: Account, is_retry_after_ta=False):
         try:
-            response = channel.send("/tu")
+            response = channel.send(user, "/tu")
             # prevent someone else's tu from being read
             name_on_tu = response.content.split(",")[0]
             if user.name != name_on_tu:
@@ -704,49 +711,53 @@ class Server:
             return TimersUp(response)
         except IndexError as e:
             if not is_retry_after_ta:
-                channel.send(Command.TIMERS_UP_ARRANGE, Command.TIMERS_UP_ARRANGE_PARAM)
+                channel.send(
+                    user, Command.TIMERS_UP_ARRANGE, Command.TIMERS_UP_ARRANGE_PARAM
+                )
                 return self.get_timers_up(channel, user, True)
             else:
-                channel.send("Oops")
+                channel.send(user, "Oops")
                 raise e
 
-    def _do_non_rolls(self, channel: Channel, tu: TimersUp) -> None:
+    def _do_non_rolls(self, user: Account, channel: Channel, tu: TimersUp) -> None:
         if self.options.do_daily and tu.can_daily:
-            channel.send(Command.DAILY)
+            channel.send(user, Command.DAILY)
         if (
             self.options.do_daily_kakera
             and tu.can_daily_kakera
             and not tu.can_react  # todo: smarter dk
         ):
-            channel.send(Command.DAILY_KAKERA)
+            channel.send(user, Command.DAILY_KAKERA)
         if self.options.do_pokeslot and tu.can_pokeslot:
-            channel.send(Command.POKESLOT)
+            channel.send(user, Command.POKESLOT)
 
     def _do_rolls(
         self,
         browser: WebDriver,
         channel: Channel,
-        tu: TimersUp,
         user: Account,
+        tu: TimersUp,
         count: int,
         roll_order: list[Command],
     ) -> list[CharacterRoll]:
         rolled = []
         for i in range(count):
             command = roll_order[i % len(roll_order)]
-            just_rolled = CharacterRoll(browser, channel.send(command))
+            just_rolled = CharacterRoll(browser, channel.send(user, command))
             rolled.append(just_rolled)
             if (
                 just_rolled.wished
                 and not just_rolled.claimed
                 and (tu.can_claim or tu.can_rt)
-                and not DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.isdisjoint(set(just_rolled.wished_by))
+                and not DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.isdisjoint(
+                    set(just_rolled.wished_by)
+                )
             ):
                 logging.info(
                     f"Claiming wish with {user.name}: '{just_rolled.name}'. Wished by: '{just_rolled.wished_by}'"
                 )
                 if not tu.can_claim:
-                    channel.send(Command.RESET_CLAIM_TIMER)
+                    channel.send(user, Command.RESET_CLAIM_TIMER)
                     tu.can_rt = False
                 just_rolled = just_rolled.get_fresh()
                 just_rolled.wish_react.click()

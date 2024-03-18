@@ -2,16 +2,15 @@
 
 Is marrying waifus in Mudae too much work? Let the Officiant do the marrying for you.
 
-This is written in python and uses Selenium to launch Discord via Firefox and perform actions you would typically do for your hourly rolls for the Mudae bot.
+This is written in python (tested in 3.11 only) and uses Selenium to launch Discord via Firefox and perform actions you would typically do for your hourly rolls for the Mudae bot.
 
-:warning: **Self-botting is against Discord's ToS.** By using this, you recognize that there is a potential risk that any Discord accounts involved may be banned. Proceed with caution.
+:warning: **Self-botting is against Discord's ToS.** By using this, you recognize that there is a potential risk that any Discord accounts involved may be banned. Proceed with caution.:warning:
 
 **Features**
 
 - Reads your `$tu` message to do dailies, pokeslot, and rolls accordingly
-- (TODO) Intelligent `$dk` usage to maximize kakera power.
-- (TODO) Specify characters and series to be automatically claimed
-- (TODO) Automatically claim the best character if it is the end of the claim period.
+- Specify characters and series to be automatically claimed
+- Automatically claim the best available character if it is the end of the claim period.
 
 ## Basic Usage
 ### Firefox Profiles
@@ -19,7 +18,7 @@ A Firefox profile must be set up for each account. To do this:
 1. Navigate to `about:profiles` in firefox
 2. Create a New Profile. Enter your preferred name and save directory.
 3. Note the `Root Directory` for the profile. This path is used to point Selenium to this instance.
-4. Launch the profile and sign in to you Discord account on [their web app](https://discord.com/app)
+4. Launch the profile and sign in to your Discord account on [their web app](https://discord.com/app)
 
 ### Configuration
 - Create an instance of `Account` for each Discord account you intend to roll with.

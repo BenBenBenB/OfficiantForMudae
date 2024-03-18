@@ -810,7 +810,7 @@ class Server:
                     tu.can_rt = False
                 just_rolled = just_rolled.get_fresh()
                 just_rolled.wish_react.click()
-                just_rolled.claimed = True
+                just_rolled.owner = user.display_name
                 tu.can_claim = False
                 continue
             if just_rolled.kakera_reacts:
@@ -836,6 +836,6 @@ class Server:
                     tu.can_rt = False
                 logging.info(f"Claiming for {user.name}: {just_rolled.name}")
                 just_rolled.claim(user.options.react_emoji)
-                just_rolled.claimed = True
+                just_rolled.owner = user.display_name
 
         return rolled

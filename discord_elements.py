@@ -719,7 +719,7 @@ class Server:
         self._do_non_rolls(user, roll_channel, tu)
 
         self._do_rolls(
-            browser, roll_channel, tu, user, tu.mk_rolls_left, [Command.ROLL_KAKERA]
+            browser, roll_channel, user, tu, tu.mk_rolls_left, [Command.ROLL_KAKERA]
         )
         rolled = self._do_rolls(
             browser, roll_channel, user, tu, tu.rolls_left, user.options.roll_order
@@ -832,7 +832,7 @@ class Server:
                 )
             ):
                 if not tu.can_claim:
-                    channel.send(Command.RESET_CLAIM_TIMER)
+                    channel.send(user, Command.RESET_CLAIM_TIMER)
                     tu.can_rt = False
                 logging.info(f"Claiming for {user.name}: {just_rolled.name}")
                 just_rolled.claim(user.options.react_emoji)

@@ -10,15 +10,18 @@ This is written in python (tested in 3.11 only) and uses Selenium to launch Disc
 
 - Reads your `$tu` message to do dailies, pokeslot, and rolls accordingly
 - Specify characters and series to be automatically claimed
+- Automatically react to kakera
+- Claims your own wishes ASAP, waits to claim others
 - Automatically claim the best available character if it is the end of the claim period.
+    - Prioritized by wishes, then kakera value.
 
 ## Basic Usage
 ### Firefox Profiles
 A Firefox profile must be set up for each account. To do this:
 1. Navigate to `about:profiles` in firefox
-2. Create a New Profile. Enter your preferred name and save directory.
-3. Note the `Root Directory` for the profile. This path is used to point Selenium to this instance.
-4. Launch the profile and sign in to your Discord account on [their web app](https://discord.com/app)
+1. Create a New Profile. Enter your preferred name and save directory.
+1. Note the `Root Directory` for the profile. This path is used to point Selenium to this instance.
+1. Launch the profile and sign in to your Discord account on [their web app](https://discord.com/app)
 
 ### Configuration
 - Create an instance of `Account` for each Discord account you intend to roll with.

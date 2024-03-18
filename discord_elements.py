@@ -411,30 +411,41 @@ class Channel:
         self._channel_id = channel_id
         self._message_box = MessageBox(driver)
 
+    @retry(exc.SlashCommandResponseNotFoundException, 2)
     def send(self, user: Account, text: str, params: str | None = None) -> Message:
         """Sends inputs to the message box and returns the response."""
         input_command, input_source = self._characterize_input(text)
-
+        min_msg_id = self.get_latest_message().message_id
         self._message_box.send(text, params)
+        if input_command is not None:
+            sleep(Wait.COMMAND_LOAD)
+        else:
+            sleep(Wait.MESSAGE_LOAD)
         latest_message = self.get_latest_message()
-        sleep(Wait.MESSAGE_LOAD)
+        attempts = 0
         while (
             input_source == MessageSource.SLASH_COMMAND
             and latest_message.source == MessageSource.SLASH_COMMAND
             and latest_message.content in ["", "Sending command..."]
-        ):
+        ) or latest_message.id <= min_msg_id:
+            sleep(Wait.MESSAGE_LOAD)
             latest_message = self.get_latest_message()
+            attempts += 1
+            if attempts > 10:
+                raise exc.SlashCommandResponseNotFoundException(
+                    f"Problem sending {input_command} for {user.name}"
+                )
         # Handle other messages that may have appeared while waiting
         now = datetime.now()
-        stale_message_age = timedelta(minutes=2)
-        if input_command and (
+        stale_message_age_limit = timedelta(minutes=2)
+        if input_command is not None and (
             input_command != latest_message.command
             or (user.display_name != latest_message.invoked_by_user)
-            or (now - latest_message.sent_at) > stale_message_age
+            or (now - latest_message.sent_at) > stale_message_age_limit
         ):
             latest_message = next(
                 message
-                for message in self.get_messages()[::-1]
+                for message in self.get_messages()
                 if message.command == input_command
             )
         if "Command DISABLED for this channel" in latest_message.content:
@@ -443,20 +454,23 @@ class Channel:
         return latest_message
 
     @retry(StaleElementReferenceException, tries=4)
-    def get_messages(self) -> list[Message]:
+    def get_messages(self, limit=25) -> list[Message]:
+        """returns the latest messages in the channel
+        limit: number of results to allow. Use None to allow all."""
+        message_elements = self._driver.find_elements(
+            By.XPATH, "//li[starts-with(@id, 'chat-messages')]"
+        )[::-1]
+        if limit >= len(message_elements):
+            limit = None
+        slice_latest = slice(None, limit, None)
         return [
             Message(self._driver, self, message_element)
-            for message_element in self._driver.find_elements(
-                By.XPATH, "//li[starts-with(@id, 'chat-messages')]"
-            )
+            for message_element in message_elements[slice_latest]
         ]
 
     @retry(StaleElementReferenceException, tries=2, delay=Wait.MESSAGE_LOAD)
     def get_latest_message(self) -> Message:
-        latest_message_element = self._driver.find_elements(
-            By.XPATH, "//li[starts-with(@id, 'chat-messages')]"
-        )[-1]
-        return Message(self._driver, self, latest_message_element)
+        return self.get_messages(1)[0]
 
     def get_message_by_id(self, message_id: int):
         return self.get_message_by_html_id(self.get_html_message_id(message_id))
@@ -647,10 +661,11 @@ class Server:
                 self._process_user(browser, user)
             except Exception:
                 logging.error(f"Problem processing user {user.name}", exc_info=True)
-                try:  # do not let this halt execution
-                    browser.quit()
-                except Exception:
-                    pass
+            try:
+                logging.info(f"{user.name} finished")
+                browser.quit()
+            except Exception:
+                pass
 
     def _process_user(self, browser: WebDriver, user: Account):
         logging.info(f"Starting user {user.name}")

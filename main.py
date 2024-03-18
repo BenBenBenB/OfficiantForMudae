@@ -1,6 +1,7 @@
 from constants import Command, ButtonAction, Emoji
 from discord_elements import Account, Server, ServerOptions, AccountOptions
 import logging
+from tendo import singleton
 from officiant_for_mudae import schedule_rolls_for_servers
 
 if __debug__:
@@ -83,6 +84,7 @@ else:
     servers = [dev_env, other_server]
 
 if __name__ == "__main__":
+    me = singleton.SingleInstance()
     logging.basicConfig(
         filename="claim_history.log", encoding="utf-8", level=logging.INFO
     )

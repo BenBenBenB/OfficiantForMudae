@@ -48,6 +48,7 @@ class AccountOptions:
     greed_threshold_rank: if the character is better ranked than this, claim it
     react_emoji: Emoji to be used for claims
     announcement_message: A message or command to be sent before you start rolling.
+    headless: run with or without UI
     """
 
     roll_order: list[Command]
@@ -58,6 +59,7 @@ class AccountOptions:
     greed_threshold_rank: int
     react_emoji: Emoji
     announcement_message: str
+    headless: bool
 
     def __init__(
         self,
@@ -69,6 +71,7 @@ class AccountOptions:
         greed_threshold_rank=0,
         react_emoji=DEFAULT_EMOJI,
         announcement_message=f"It's roll time! {Emoji.GAME_DIE}",
+        headless=False,
     ) -> None:
         self.roll_order = roll_order
         self.allowed_kakera_reacts = allowed_kakera_reacts
@@ -78,6 +81,7 @@ class AccountOptions:
         self.greed_threshold_rank = greed_threshold_rank
         self.react_emoji = react_emoji
         self.announcement_message = announcement_message
+        self.headless = headless
 
 
 class Account:
@@ -104,7 +108,8 @@ class Account:
 
     def get_firefox_browser(self) -> WebDriver:
         ffOptions = Options()
-        ffOptions.add_argument("-headless")
+        if self.options.headless:
+            ffOptions.add_argument("-headless")
         ffOptions.add_argument("-profile")
         ffOptions.add_argument(self.firefox_profile)
         browser = webdriver.Firefox(options=ffOptions)

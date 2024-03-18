@@ -104,6 +104,7 @@ class Account:
 
     def get_firefox_browser(self) -> WebDriver:
         ffOptions = Options()
+        ffOptions.add_argument("-headless")
         ffOptions.add_argument("-profile")
         ffOptions.add_argument(self.firefox_profile)
         browser = webdriver.Firefox(options=ffOptions)

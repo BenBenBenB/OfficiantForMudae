@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import logging
 from operator import attrgetter
 import re
@@ -214,10 +214,11 @@ class Message:
         self.message_id = element.get_attribute("id").split("-")[-1]
         text_lines = element.text.split("\n")
         self.command, self.invoked_by_user = None, None
+        self.sent_at = self._get_time_stamp()
+
         if len(text_lines) == 1:
             self.source = MessageSource.TEXT
         elif text_lines[1] == " used ":
-            self.sent_at = parse_date_str(text_lines[5])
             self.invoked_by_user = text_lines[0].lstrip("@")
             self.source = MessageSource.SLASH_COMMAND
             try:
@@ -260,6 +261,12 @@ class Message:
             By.XPATH, f"//button[contains(@data-name,'{emoji_text}')]"
         )
         emoji_button.click()
+
+    def _get_time_stamp(self) -> datetime:
+        time_element = self.element.find_element(By.TAG_NAME, "time")
+        time_str = time_element.get_attribute("datetime")
+        time_stamp = datetime.fromisoformat(time_str)
+        return time_stamp.replace(tzinfo=timezone.utc)
 
 
 class MudaeButton:
@@ -436,8 +443,8 @@ class Channel:
                     f"Problem sending {input_command} for {user.name}"
                 )
         # Handle other messages that may have appeared while waiting
-        now = datetime.now()
-        stale_message_age_limit = timedelta(minutes=2)
+        now = datetime.now(timezone.utc)
+        stale_message_age_limit = timedelta(seconds=30)
         if input_command is not None and (
             input_command != latest_message.command
             or (user.display_name != latest_message.invoked_by_user)
@@ -667,17 +674,36 @@ class Server:
             except Exception:
                 pass
 
+    def _coast_is_clear(self, channel: Channel):
+        latest = channel.get_latest_message()
+        now = datetime.now(timezone.utc)
+        delta = now - latest.sent_at
+        if delta.seconds < Wait.COAST_IS_CLEAR:
+            logging.info(
+                f"Waiting for others to be done. message id: {latest.message_id}"
+            )
+            sleep(Wait.COAST_IS_CLEAR - delta.seconds)
+            return False
+        return True
+
     def _process_user(self, browser: WebDriver, user: Account):
         logging.info(f"Starting user {user.name}")
         browser.get(self.url)
         sleep(Wait.PAGE_LOAD)
-        # todo: wait for latest message in channel to be 15s or older
         roll_channel = Channel(browser, self.server_id, self.roll_channel_id)
         roll_channel.send(user, Keys.ESCAPE * 2)
         user.display_name = get_user_display_name(browser)
         DISPLAY_NAMES_TO_CLAIM_WISHES_FOR.add(user.display_name)
+        while not self._coast_is_clear(roll_channel):
+            pass
         if user.options.announcement_message and self.options.announce_start:
-            roll_channel.send(user, user.options.announcement_message)
+            try:
+                roll_channel.send(user, user.options.announcement_message)
+            except exc.CommandDisabledException:
+                logging.warning(
+                    f"{user.name} has an invalid announcement for {self.name}: {user.options.announcement_message}"
+                )
+                pass
         try:
             tu = self.get_timers_up(roll_channel, user)
         except exc.InvalidTimersUpException:

@@ -9,3 +9,4 @@ class Wait:
     SPAM_REACT = 0.1
     LOAD_BUTTON = 0.1
     LET_CLAIM_COOK = 4.0
+    COAST_IS_CLEAR = 15.0

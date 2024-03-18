@@ -4,9 +4,6 @@ import logging
 from tendo import singleton
 from officiant_for_mudae import schedule_rolls_for_servers
 
-if __debug__:
-    from datetime import datetime
-
 GOOD_REACTS = [
     ButtonAction.PURPLE,
     ButtonAction.YELLOW,
@@ -77,11 +74,7 @@ other_server = Server(
     options=ServerOptions(do_daily=False, do_pokeslot=False),
 )
 
-if __debug__:
-    dev_env.minute_of_hour_to_roll = datetime.now().minute
-    servers = [dev_env]
-else:
-    servers = [dev_env, other_server]
+servers = [dev_env, other_server]
 
 if __name__ == "__main__":
     me = singleton.SingleInstance()

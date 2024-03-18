@@ -8,9 +8,6 @@ from discord_elements import Server
 def get_seconds_until_minute_of_hour(
     minute_of_hour: int, starting_up: bool
 ) -> datetime.timedelta:
-    if __debug__ and starting_up:
-        return 0
-
     now = datetime.datetime.now()
     if now.minute == minute_of_hour and starting_up:
         return 0

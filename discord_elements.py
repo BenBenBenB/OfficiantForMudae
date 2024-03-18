@@ -48,7 +48,7 @@ class AccountOptions:
     greed_threshold_rank: if the character is better ranked than this, claim it
     react_emoji: Emoji to be used for claims
     announcement_message: A message or command to be sent before you start rolling.
-    headless: run with or without UI
+    headless: if true, run with without any UI
     """
 
     roll_order: list[Command]
@@ -71,7 +71,7 @@ class AccountOptions:
         greed_threshold_rank=0,
         react_emoji=DEFAULT_EMOJI,
         announcement_message=f"It's roll time! {Emoji.GAME_DIE}",
-        headless=False,
+        headless=True,
     ) -> None:
         self.roll_order = roll_order
         self.allowed_kakera_reacts = allowed_kakera_reacts
@@ -692,8 +692,8 @@ class Server:
             return False
         return True
 
-    def _process_user(self, browser: WebDriver, user: Account):
-        logging.info(f"Starting user {user.name}")
+    def _process_user(self, browser: WebDriver, user: Account) -> None:
+        logging.debug(f"Starting user {user.name}")
         browser.get(self.url)
         sleep(Wait.PAGE_LOAD)
         roll_channel = Channel(browser, self.server_id, self.roll_channel_id)
@@ -714,6 +714,8 @@ class Server:
             tu = self.get_timers_up(roll_channel, user)
         except exc.InvalidTimersUpException:
             roll_channel.send(user, "Oops sorry!")
+            logging.warn(f"Problem with $tu for {user.name}")
+            return
         self._do_non_rolls(user, roll_channel, tu)
 
         self._do_rolls(
